@@ -1,0 +1,6 @@
+.DS_Store
+.Rproj.user
+__pycache__
+data
+*.html
+*.png

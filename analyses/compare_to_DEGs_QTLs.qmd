@@ -1,0 +1,120 @@
+---
+title: "Compare eQTLs to DEGs and QTLs"
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+# 1045 genes with strong evidence of bHR/bLR differential expression in F0, and were also present in F2 (Table S3)
+deg <- readxl::read_xlsx("../data/preprint/supp_table_S3.xlsx",
+                         sheet = "CandidateGenes_SortbyLocoPval",
+                         range = "B1:M1046") |>
+    rename(gene_id = `ENSEMBL ID (Rnor6 Ensembl v.103)`)
+
+# Data from Chitre et al. 2023 Table 4
+qtls <- read_tsv("../data/gwas_pub/table_4_qtls.tsv", col_types = "ccii") |>
+    mutate(chrom = str_extract(top_snp, "chr([:digit:]+):", group = 1) |> as.integer()) |>
+    rename(top_gwas_snp = top_snp)
+
+eqtls <- read_tsv("../data/eqtl/f2.eqtls_indep.txt", col_types = "cc-cii---------ddc") |>
+    rename(top_eqtl_snp = variant_id)
+```
+
+I started with the residualized CPM expression, and did the quantile normalization + inverse normal transform steps used in RatGTEx to prepare it for eQTL mapping. I computed 10 covariates: 5 genotype PCs and 5 expression PCs. For RatGTEx I used 20 expression PCs, but used fewer here since the expression was already residualized. I ran tensorQTL to map cis-eQTLs, then ran aFC.py using the count data from GEO to calculate effect size in terms of allelic fold-change.
+
+I tested 13,547 genes for cis-eQTLs and found 5937 cis-eQTLs in 5351 genes. For genes where more than one cis-eQTL was found, they were conditionally-independent, i.e. the 2nd one was found after regressing out the genotypes of the 1st SNP, and so on.
+
+Here I'm comparing the cis-eQTLs to results in the [preprint](https://www.biorxiv.org/content/10.1101/2022.07.14.500129v3.full) and the [published GWAS](https://www.frontiersin.org/articles/10.3389/fgene.2022.1003074/full).
+
+These are the eQTLs that fell within each of the 10 GWAS QTL LD intervals:
+
+```{r}
+eqtls_in_qtls <- eqtls |>
+    inner_join(qtls, by = join_by(chrom == chrom, between(pos, start, stop, bounds = "[]"))) |>
+    select(trait, top_gwas_snp, top_eqtl_snp, gene_id, gene_name, log2_aFC_alt_ref) |>
+    arrange(trait, top_gwas_snp)
+eqtls_in_qtls |>
+    knitr::kable()
+```
+
+Each unique eQTL from the above table, showing whether it's included in the 1045 candidate DEGs:
+
+```{r}
+eqtls_in_qtls |>
+    distinct(gene_id, gene_name, log2_aFC_alt_ref) |>
+    mutate(is_DEG = gene_id %in% deg$gene_id) |>
+    knitr::kable()
+```
+
+There were 15 unique eGenes inside QTL intervals. Only two of them, Pop4 and AABR07071904.1, were candidate DEGs. Interestingly, while the AABR07071904.1 eQTL had high log2aFC, -1.92, the Pop4 eQTL had very low log2aFC, -0.007.
+
+AABR07071904.1 appears in the Figure 6D Manhattan plot, but Pop4 does not.
+
+Pop4 appears in the GWAS paper Table 4 QTL summary, alongside the same 4 traits it matches above. I don't think AABR07071904.1 (or any alias of it) appears in the table.
+
+RGD says ENSRNOG00000052237 (AABR07071904.1) is a provisional lincRNA (long intergenic non-coding RNA). And according to this study's preprint, "in mRatBN7.2 (ENSEMBL v106), the gene was retired, but maps to *Zfp939-201* (Zinc finger protein 939)".
+
+### Overall correspondence between DE results and cis-eQTLs
+
+I used allelic fold-change as the measure of effect size of the cis-eQTLs. Comparing those to the DE fold-change for the same gene:
+
+```{r}
+fc <- inner_join(
+    deg |> select(gene_id, F0_Log2FC_bLRvsbHR),
+    eqtls |> select(gene_id, log2_aFC_alt_ref),
+    by = "gene_id"
+)
+
+fc |>
+    ggplot(aes(x = F0_Log2FC_bLRvsbHR, y = log2_aFC_alt_ref)) +
+    geom_abline(slope = c(-1, 1), intercept = 0, lty = 2, color = "gray") +
+    geom_point(size = 1, alpha = 0.5) +
+    coord_fixed() +
+    expand_limits(x = c(-8, 8), y = c(-8, 8)) +
+    theme_bw()
+```
+
+The signs of the DE log2FC are based on which strain has higher expression, while the signs of eQTL log2aFC are with respect to ref and alt alleles. There is probably not much bias towards one strain having all the alt alleles, so the signs will mostly not correlate. Looking at absolute value log2 fold-changes:
+
+```{r}
+fc_corr <- with(fc, cor(abs(F0_Log2FC_bLRvsbHR), abs(log2_aFC_alt_ref))) |> round(3)
+fc |>
+    ggplot(aes(x = abs(F0_Log2FC_bLRvsbHR), y = abs(log2_aFC_alt_ref))) +
+    geom_abline(slope = 1, intercept = 0, lty = 2, color = "gray") +
+    geom_point(size = 1, alpha = 0.5) +
+    coord_fixed() +
+    expand_limits(x = 8, y = 8) +
+    ggtitle(str_glue("Pearson r = {fc_corr}")) +
+    theme_bw()
+```
+
+#### Reorienting aFC to bLR/bHR
+
+For each SNP, determine whether bLR (N=10) or bHR (N=10) F0 rats have higher alt allele frequency. Use this to label one of the two alleles as the 'bLR allele' and the other as 'bHR allele'. Then flip the log2 aFC signs as needed so that they represent bLR allele to bHR allele fold change. Omit the 3.9% of eQTLs whose variant had equal allele frequency in bLR and bHR.
+
+```{r}
+fc2 <- inner_join(
+    deg |> select(gene_id, F0_Log2FC_bLRvsbHR),
+    eqtls |> filter(!is.na(log2_aFC_bLR_bHR)) |> select(gene_id, log2_aFC_bLR_bHR),
+    by = "gene_id"
+)
+fc2_corr <- with(fc2, cor(F0_Log2FC_bLRvsbHR, log2_aFC_bLR_bHR)) |> round(3)
+
+fc2 |>
+    ggplot(aes(x = F0_Log2FC_bLRvsbHR, y = log2_aFC_bLR_bHR)) +
+    geom_abline(slope = c(-1, 1), intercept = 0, lty = 2, color = "gray") +
+    geom_point(size = 1, alpha = 0.5) +
+    coord_fixed() +
+    expand_limits(x = c(-8, 8), y = c(-8, 8)) +
+    ggtitle(str_glue("Pearson r = {fc2_corr}")) +
+    theme_bw()
+
+ggsave("eQTL_vs_F0_FC.png", width = 5, height = 5, device = png)
+```

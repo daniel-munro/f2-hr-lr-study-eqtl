@@ -1,0 +1,100 @@
+---
+title: "Colocalization"
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+I used the SMR (summary data-based Mendelian randomization) method of colocalization, the same way as in our [Munro et al. 2022 paper](https://academic.oup.com/nar/article/50/19/10882/6764417). Except there, we only had GWAS summary stats for pruned SNPs, so we had to find the strongest eSNP per eQTL that was tested in GWAS. Here, all top eQTL SNPs were tested in the GWAS.
+
+Note that this colocalization method does not take LD into account, and does not determine whether the eQTL and GWAS QTL share a causal SNP. Rather, it evaluates consistency of eQTL/GWAS effects at the eQTL SNPs. The original SMR method study used a second step called HEIDI to consider LD and establish shared causal SNPs, but we generally don't have the mapping resolution in our rat cohorts to test colocalization at single-SNP resolution.
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+smr <- read_tsv("colocs_sig.tsv", col_types = "cccdcddd")
+
+smr_all <- read_tsv("colocs.tsv", col_types = "cccdcddd") |>
+    group_by(trait) |>
+    mutate(sig = p_SMR < 0.05 / n()) |>
+    ungroup()
+```
+
+Significant colocalizations for all 20 traits:
+
+```{r}
+knitr::kable(smr)
+```
+
+Shown as 2D tiles:
+
+```{r fig.width = 6, fig.height = 2.5}
+smr |>
+    ggplot(aes(x = gene_name, y = trait, fill = -log10(p_SMR))) +
+    geom_tile() +
+    theme_classic() +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 1, angle = 45))
+```
+
+All colocalization test results, with the significant hits (listed above) colored by trait:
+
+```{r}
+chr_len <- c(282763074, 266435125, 177699992, 184226339, 173707219,
+             147991367, 145729302, 133307652, 122095297, 112626471,
+             90463843, 52716770, 114033958, 115493446, 111246239,
+             90668790, 90843779, 88201929, 62275575, 56205956)
+label_locs <- cumsum(c(0, chr_len[1:19])) + chr_len / 2
+grid_locs <- cumsum(c(0, chr_len))
+
+d <- smr_all |>
+    mutate(variant_id = str_replace(variant_id, "chr", ""),
+           logp = -log10(p_SMR)) |>
+    separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE) |>
+    mutate(gpos = pos + cumsum(c(0, chr_len))[chrom],
+           gcolor = as.factor((chrom - 1) %% 2)) |>
+    arrange(gpos)
+
+thresh <- -log10(0.05 / n_distinct(smr_all$variant_id))
+
+d |>
+    filter(sig) |>
+    ggplot(aes(x = gpos, y = logp, color = trait)) +
+    # Workaround since only one color scale can be used:
+    geom_point(aes(color = NULL), data = filter(d, !sig, gcolor == 0), size = 0.5,
+               color = "#999999", show.legend = FALSE) +
+    geom_point(aes(color = NULL), data = filter(d, !sig, gcolor == 1), size = 0.5,
+               color = "#bbbbbb", show.legend = FALSE) +
+    geom_point(size = 1) +
+    geom_hline(yintercept = thresh, linewidth = 0.2) +
+    expand_limits(x = c(0, sum(chr_len))) +
+    expand_limits(y = c(0, max(d$logp) * 1.05)) +
+    scale_x_continuous(breaks = label_locs, labels = 1:20, expand = c(0.02, 0),
+                       minor_breaks = grid_locs) +
+    scale_y_continuous(expand = c(0.01, 0)) +
+    # scale_color_manual(values = c("#377eb8", "#4daf4a", "#e41a1c", "#ff7f00", "#984ea3")) +
+    theme_bw() +
+    theme(
+        axis.text = element_text(color = "black"),
+        legend.background = element_rect(color = "black", linewidth = 0.2),
+        legend.justification = c(1, 1),
+        legend.key.size = unit(10, "pt"),
+        legend.position = c(0.98, 0.95),
+        legend.spacing.y = unit(5, "pt"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        # legend.box.margin = margin(0, 0, 0, -5, unit = "pt"),
+        # legend.margin = margin(0, 0, 0, 0),
+        # legend.spacing.x = unit(0, "pt"),
+    ) +
+    xlab("Chromosome") +
+    ylab(expression(-log[10](P[SMR]))) +
+    labs(color = "Trait")
+```
+
+Compare that to the published GWAS porcupine plot:
+
+![Chitre et al. 2022 Figure 8A](images/Figure8A.png)
