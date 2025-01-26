@@ -38,11 +38,9 @@ df <- eqtls |>
            p_SMR = p_SMR(T_SMR)) |>
     select(-ref, -alt, -A1, -A2)
 
-write_tsv(df, "analysis/colocs.tsv")
+write_tsv(df, "data/coloc/colocs.tsv")
 
 sig <- df |>
-    group_by(trait) |>
-    filter(p_SMR < 0.05 / n()) |>
-    ungroup()
+    filter(p_SMR < 0.05 / n(), .by = trait)
 
-write_tsv(sig, "analysis/colocs_sig.tsv")
+write_tsv(sig, "data/coloc/colocs_sig.tsv")

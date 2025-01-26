@@ -3,17 +3,19 @@ library(tidyverse)
 load_tensorqtl <- function(tensorqtl_out) {
     read_tsv(tensorqtl_out, col_types = "ci----c---dddd-ddd") |>
         rename(gene_id = phenotype_id) |>
-        separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE,
-                 remove = FALSE) |>
-        mutate(chrom = str_replace(chrom, "chr", ""))
+        separate_wider_delim(variant_id, ":", names = c("chrom", "pos"),
+                 cols_remove = FALSE) |>
+        mutate(chrom = str_replace(chrom, "chr", ""),
+               pos = as.integer(pos))
 }
 
 load_tensorqtl_ind <- function(tensorqtl_out) {
     read_tsv(tensorqtl_out, col_types = "ci----c---dddd-cd") |>
         rename(gene_id = phenotype_id) |>
-        separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE,
-                 remove = FALSE) |>
-        mutate(chrom = str_replace(chrom, "chr", ""))
+        separate_wider_delim(variant_id, ":", names = c("chrom", "pos"),
+                 cols_remove = FALSE) |>
+        mutate(chrom = str_replace(chrom, "chr", ""),
+               pos = as.integer(pos))
 }
 
 load_afc <- function(afc_out) {
@@ -39,17 +41,17 @@ alleles <- read_tsv("data/reference/alleles.txt.gz", col_types = "ccc",
 
 alleles_bLR_bHR <- read_tsv("data/genotypes/bLR_bHR_alleles.tsv.gz", col_types = "cccddc")
 
-inner_join(alleles, alleles_bLR_bHR, by = "variant_id") |>
+inner_join(alleles, alleles_bLR_bHR, by = "variant_id", relationship = "one-to-one") |>
     with(table(ref.x == ref.y, alt.x == alt.y))
 
 afc <- load_afc("data/eqtl/f2.aFC.txt")
 
 top_assoc <- load_tensorqtl("data/eqtl/f2.cis_qtl.txt.gz") |>
-    left_join(afc, by = c("gene_id", "variant_id")) |>
-    left_join(genes, by = "gene_id") |>
+    left_join(afc, by = c("gene_id", "variant_id"), relationship = "one-to-one") |>
+    left_join(genes, by = "gene_id", relationship = "one-to-one") |>
     mutate(tss_distance = if_else(strand == "+", pos - tss, tss - pos)) |>
     select(-strand, -tss) |>
-    left_join(alleles, by = "variant_id") |>
+    left_join(alleles, by = "variant_id", relationship = "many-to-one") |>
     relocate(gene_name, .after = gene_id) |>
     relocate(tss_distance, .after = af) |>
     relocate(ref, alt, .after = pos)
@@ -57,11 +59,11 @@ top_assoc <- load_tensorqtl("data/eqtl/f2.cis_qtl.txt.gz") |>
 write_tsv(top_assoc, "data/eqtl/f2.top_assoc.txt")
 
 eqtls_ind <- load_tensorqtl_ind("data/eqtl/f2.cis_independent_qtl.txt.gz") |>
-    left_join(afc, by = c("gene_id", "variant_id")) |>
-    left_join(genes, by = "gene_id") |>
+    left_join(afc, by = c("gene_id", "variant_id"), relationship = "one-to-one") |>
+    left_join(genes, by = "gene_id", relationship = "many-to-one") |>
     mutate(tss_distance = if_else(strand == "+", pos - tss, tss - pos)) |>
     select(-strand, -tss) |>
-    left_join(alleles, by = "variant_id") |>
+    left_join(alleles, by = "variant_id", relationship = "many-to-one") |>
     relocate(gene_name, .after = gene_id) |>
     relocate(tss_distance, .after = af) |>
     relocate(ref, alt, .after = pos) |>

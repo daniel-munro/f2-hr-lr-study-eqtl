@@ -27,13 +27,11 @@ df <- bind_rows(tibble(sample_id = bLR, group = "bLR"),
 write_tsv(df, "data/F0_samples.tsv")
 
 snps <- tibble(variant_id = rownames(geno)) |>
-    separate(variant_id, into = c("variant_id", "alleles"), sep = "_") |>
-    separate(alleles, into = c("ref", "alt"), sep = "/") |>
+    separate_wider_delim(variant_id, "_", names = c("variant_id", "alleles")) |>
+    separate_wider_delim(alleles, "/", names = c("ref", "alt")) |>
     mutate(
         bLR_mean = rowMeans(geno[, bLR]),
         bHR_mean = rowMeans(geno[, bHR]),
-        # bLR_allele = if_else(bLR_mean < 1, ref, alt),
-        # bHR_allele = if_else(bHR_mean < 1, ref, alt),
         alt_group = case_when(
             bLR_mean > bHR_mean ~ "bLR",
             bLR_mean < bHR_mean ~ "bHR",
